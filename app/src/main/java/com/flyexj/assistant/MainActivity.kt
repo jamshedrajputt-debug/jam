@@ -7,6 +7,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
@@ -23,7 +30,23 @@ class MainActivity : ComponentActivity() {
     private lateinit var voiceInput: VoiceInputManager
     private lateinit var commandRouter: LocalCommandRouter
     private lateinit var voiceReply: VoiceReply
+    private val prefs by lazy { getSharedPreferences("flyexj_ai", MODE_PRIVATE) }
     private var language = "ur-PK"
+    private var requestId = 0
+    private fun cloud(text: String, test: Boolean = false) {
+        val token = prefs.getString("token", "") ?: ""
+        val callback = voiceCallback
+        if (token.length < 24) { callback?.invoke(text,"Set your private access token in AI Settings first."); return }
+        val id = ++requestId
+        callback?.invoke(text,"Connecting to AI…")
+        lifecycleScope.launch {
+            val answer = withContext(Dispatchers.IO) { CloudAssistant.ask(token,text) }
+            if (id == requestId) {
+                callback?.invoke(text,answer)
+                if (!test) voiceReply.speak(answer)
+            }
+        }
+    }
     private var pendingCommand = ""
     private val contactPermission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         val result = commandRouter.handle(pendingCommand)
@@ -31,12 +54,15 @@ class MainActivity : ComponentActivity() {
         voiceReply.speak(result.message)
     }
     private fun execute(text: String) {
+        requestId++
+        if (text.startsWith("AI:",true)) { cloud(text.substringAfter(':').trim()); return }
         if (commandRouter.isCall(text) && ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             pendingCommand = text
             contactPermission.launch(arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.CALL_PHONE))
             return
         }
         val result = commandRouter.handle(text)
+        if (!result.handled) { cloud(text); return }
         voiceReply.speak(result.message)
         voiceCallback?.invoke(text, result.message)
     }
@@ -52,7 +78,7 @@ class MainActivity : ComponentActivity() {
             execute(text)
         }, { state -> voiceCallback?.invoke("", state) })
         setContent {
-            FlyexJApp(onLanguage = { language = it }, onTyped = { text, callback -> voiceCallback = callback; execute(text) }, onListen = { callback ->
+            FlyexJApp(initialToken = prefs.getString("token","") ?: "", onSaveToken = { prefs.edit().putString("token",it).apply() }, onTest = { callback -> voiceCallback = callback; cloud("Reply with a short greeting in Urdu.",true) }, onLanguage = { language = it }, onTyped = { text, callback -> voiceCallback = callback; execute(text) }, onListen = { callback ->
                 voiceCallback = callback
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                     voiceInput.start(language)
@@ -67,7 +93,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 @Composable
-fun FlyexJApp(onLanguage: (String) -> Unit, onTyped: (String, (String, String) -> Unit) -> Unit, onListen: ((String, String) -> Unit) -> Unit, onStop: () -> Unit) {
+fun FlyexJApp(initialToken: String, onSaveToken: (String) -> Unit, onTest: ((String,String) -> Unit) -> Unit, onLanguage: (String) -> Unit, onTyped: (String, (String, String) -> Unit) -> Unit, onListen: ((String, String) -> Unit) -> Unit, onStop: () -> Unit) {
+    var showSettings by remember { mutableStateOf(false) }
+    var token by remember { mutableStateOf(initialToken) }
     var typed by remember { mutableStateOf("") }
     var urdu by remember { mutableStateOf(true) }
     var listening by remember { mutableStateOf(false) }
@@ -78,13 +106,23 @@ fun FlyexJApp(onLanguage: (String) -> Unit, onTyped: (String, (String, String) -
     MaterialTheme(colorScheme = darkColorScheme(primary = cyan, background = bg, surface = Color(0xFF111927))) {
         Column(
             modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(bg, Color(0xFF101C31))))
-                .padding(horizontal = 20.dp, vertical = 12.dp),
+                .verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(Modifier.height(24.dp))
             Text("FlyexJ", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            TextButton(onClick = { showSettings = true }) { Text("AI Settings / ترتیبات") }
+            if (showSettings) {
+                AlertDialog(onDismissRequest = { showSettings = false }, title = { Text("Cloud AI connection") }, text = {
+                    Column {
+                        Text("Gemini → Claude → OpenAI fallback. Unmatched commands are sent to the cloud. Prefix AI: to ask directly.")
+                        OutlinedTextField(value = token, onValueChange = { token = it }, label = { Text("Private access token") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
+                    }
+                }, confirmButton = { TextButton(onClick = { onSaveToken(token.trim()); showSettings = false; status = "Token saved. Test connection next." }) { Text("Save") } }, dismissButton = { TextButton(onClick = { showSettings = false }) { Text("Cancel") } })
+            }
+            TextButton(onClick = { onTest { _, reply -> status = reply } }) { Text("Test AI connection") }
             Text("PERSONAL VOICE ASSISTANT", fontSize = 11.sp, letterSpacing = 3.sp, color = cyan)
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(16.dp))
             Box(contentAlignment = Alignment.Center) {
                 Box(Modifier.size(156.dp).background(Color(0x223BD4FF), CircleShape))
                 Box(Modifier.size(136.dp).background(Color(0x333BD4FF), CircleShape))
@@ -95,7 +133,7 @@ fun FlyexJApp(onLanguage: (String) -> Unit, onTyped: (String, (String, String) -
             Text(status, color = Color(0xFFB7C7DC), fontSize = 16.sp)
             Spacer(Modifier.height(12.dp))
             Text(transcript, color = Color(0xFF8296B1), fontSize = 13.sp)
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(16.dp))
             Button(onClick = {
                 if (!listening) {
                     listening = true
