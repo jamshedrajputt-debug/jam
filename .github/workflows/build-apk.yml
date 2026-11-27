@@ -1,13 +1,12 @@
 name: Build FlyexJ Android APK
 on:
   workflow_dispatch:
+  pull_request:
   push:
-    branches: [main, master]
+    branches: [main]
 jobs:
   apk:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -18,10 +17,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - name: Install Android SDK 35
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
-      - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: FlyexJ-v0.2.0-debug-apk
