@@ -34,6 +34,12 @@ class MainActivity : ComponentActivity() {
     private var language = "ur-PK"
     private var requestId = 0
     private var wakeMode = false
+    private var backgroundRequested = false
+    private fun stopBackground() { backgroundRequested = false; stopService(android.content.Intent(this, WakeService::class.java)) }
+    private fun startBackground() {
+        voiceInput.stop(); voiceReply.stop(); requestId++
+        try { ContextCompat.startForegroundService(this, android.content.Intent(this, WakeService::class.java).putExtra("language",language)) } catch (_: Exception) { backgroundRequested = false; voiceCallback?.invoke("", "Background listening could not start") }
+    }
     private var foreground = false
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private fun rearm() {
@@ -93,7 +99,7 @@ class MainActivity : ComponentActivity() {
     }
     private var voiceCallback: ((String, String) -> Unit)? = null
     private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) voiceInput.start(language) else voiceCallback?.invoke("", "Microphone permission denied")
+        if (granted) { if (backgroundRequested) startBackground() else voiceInput.start(language) } else { backgroundRequested = false; voiceCallback?.invoke("", "Microphone permission denied") }
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -118,14 +124,15 @@ class MainActivity : ComponentActivity() {
         })
         setContent {
             FlyexJApp(initialToken = prefs.getString("token","") ?: "", onSaveToken = { prefs.edit().putString("token",it).apply() }, onTest = { callback -> voiceCallback = callback; cloud("Reply with a short greeting in Urdu.",true) }, onLanguage = { language = it; voiceReply.setLanguage(it) }, onWake = { enabled ->
-                wakeMode = enabled
+                wakeMode = false
+                backgroundRequested = enabled
                 if (enabled) {
-                    voiceReply.stop()
-                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) rearm()
+                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startBackground()
                     else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-                } else voiceInput.stop()
-            }, onTyped = { text, callback -> voiceCallback = callback; execute(text) }, onListen = { callback ->
+                } else stopBackground()
+            }, onTyped = { text, callback -> stopBackground(); voiceCallback = callback; execute(text) }, onListen = { callback ->
                 voiceCallback = callback
+                stopBackground()
                 wakeMode = false
                 voiceReply.stop()
                 requestId++
@@ -133,7 +140,7 @@ class MainActivity : ComponentActivity() {
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                     voiceInput.start(language)
                 } else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-            }, onStop = { wakeMode = false; requestId++; voiceInput.stop(); voiceReply.stop() })
+            }, onStop = { stopBackground(); wakeMode = false; requestId++; voiceInput.stop(); voiceReply.stop() })
         }
     }
     override fun onDestroy() {
@@ -206,8 +213,8 @@ fun FlyexJApp(initialToken: String, onSaveToken: (String) -> Unit, onTest: ((Str
                 FilterChip(selected = !urdu, onClick = { urdu = false; onLanguage("en-GB") }, label = { Text("English") })
             }
             OutlinedTextField(value = typed, onValueChange = { typed = it }, label = { Text("Type a command / حکم لکھیں") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-            Button(onClick = { if (typed.isNotBlank()) { val command = typed; typed = ""; onTyped(command) { text, reply -> transcript = text; status = reply; listening = false } } }, modifier = Modifier.fillMaxWidth()) { Text("Send command") }
-            Row(verticalAlignment = Alignment.CenterVertically) { Text("Hey FlyexJ (app open)"); Spacer(Modifier.weight(1f)); Switch(checked = wake, onCheckedChange = { wake = it; onWake(it) }) }
+            Button(onClick = { if (typed.isNotBlank()) { val command = typed; typed = ""; wake = false; onTyped(command) { text, reply -> transcript = text; status = reply; listening = false } } }, modifier = Modifier.fillMaxWidth()) { Text("Send command") }
+            Row(verticalAlignment = Alignment.CenterVertically) { Text("Hey FlyexJ (background)"); Spacer(Modifier.weight(1f)); Switch(checked = wake, onCheckedChange = { wake = it; onWake(it) }) }
             TextButton(onClick = { wake = false; listening = false; onStop(); status = "Stopped" }) { Text("Stop speaking / listening") }
             Text("Try: Ammi ko call karo • ٹارچ آن کرو", color = cyan, fontSize = 12.sp)
             Text("Calls • Contacts • Phone controls • Search", color = Color(0xFF8296B1), fontSize = 11.sp)
