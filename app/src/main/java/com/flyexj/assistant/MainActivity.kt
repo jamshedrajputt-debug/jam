@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
     private val prefs by lazy { getSharedPreferences("flyexj_ai", MODE_PRIVATE) }
     private var language = "ur-PK"
     private var requestId = 0
+    private val history = ArrayDeque<String>()
     private fun cloud(text: String, test: Boolean = false) {
         val token = prefs.getString("token", "") ?: ""
         val callback = voiceCallback
@@ -40,10 +41,18 @@ class MainActivity : ComponentActivity() {
         val id = ++requestId
         callback?.invoke(text,"Connecting to AI…")
         lifecycleScope.launch {
-            val answer = withContext(Dispatchers.IO) { CloudAssistant.ask(token,text) }
+            val context = history.joinToString("\n").takeLast(1800)
+            val instruction = if (language == "ur-PK") "Reply in natural Pakistani Urdu script for spoken pronunciation." else "Reply in English."
+            val answer = withContext(Dispatchers.IO) { CloudAssistant.ask(token, "$instruction\nRecent conversation:\n$context\nCurrent user question: $text") }
             if (id == requestId) {
                 callback?.invoke(text,answer)
-                if (!test) voiceReply.speak(answer)
+                if (!test) {
+                    if (!answer.startsWith("AI error") && !answer.startsWith("Cloud connection failed")) {
+                        history.addLast("User: $text\nAssistant: $answer")
+                        while (history.size > 4) history.removeFirst()
+                        voiceReply.speak(answer)
+                    }
+                }
             }
         }
     }
@@ -78,7 +87,7 @@ class MainActivity : ComponentActivity() {
             execute(text)
         }, { state -> voiceCallback?.invoke("", state) })
         setContent {
-            FlyexJApp(initialToken = prefs.getString("token","") ?: "", onSaveToken = { prefs.edit().putString("token",it).apply() }, onTest = { callback -> voiceCallback = callback; cloud("Reply with a short greeting in Urdu.",true) }, onLanguage = { language = it }, onTyped = { text, callback -> voiceCallback = callback; execute(text) }, onListen = { callback ->
+            FlyexJApp(initialToken = prefs.getString("token","") ?: "", onSaveToken = { prefs.edit().putString("token",it).apply() }, onTest = { callback -> voiceCallback = callback; cloud("Reply with a short greeting in Urdu.",true) }, onLanguage = { language = it; voiceReply.setLanguage(it) }, onTyped = { text, callback -> voiceCallback = callback; execute(text) }, onListen = { callback ->
                 voiceCallback = callback
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                     voiceInput.start(language)
@@ -115,7 +124,7 @@ fun FlyexJApp(initialToken: String, onSaveToken: (String) -> Unit, onTest: ((Str
             if (showSettings) {
                 AlertDialog(onDismissRequest = { showSettings = false }, title = { Text("Cloud AI connection") }, text = {
                     Column {
-                        Text("Gemini → Claude → OpenAI fallback. Unmatched commands are sent to the cloud. Prefix AI: to ask directly.")
+                        Text("GPT via OpenRouter, with Gemini and Claude fallback. Unmatched commands are sent to the cloud. Prefix AI: to ask directly.")
                         OutlinedTextField(value = token, onValueChange = { token = it }, label = { Text("Private access token") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
                     }
                 }, confirmButton = { TextButton(onClick = { onSaveToken(token.trim()); showSettings = false; status = "Token saved. Test connection next." }) { Text("Save") } }, dismissButton = { TextButton(onClick = { showSettings = false }) { Text("Cancel") } })
