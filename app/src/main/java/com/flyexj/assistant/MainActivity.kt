@@ -67,7 +67,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 @Composable
-fun FlyexJApp(onListen: ((String, String) -> Unit) -> Unit, onStop: () -> Unit) {
+fun FlyexJApp(onLanguage: (String) -> Unit, onTyped: (String, (String, String) -> Unit) -> Unit, onListen: ((String, String) -> Unit) -> Unit, onStop: () -> Unit) {
     var typed by remember { mutableStateOf("") }
     var urdu by remember { mutableStateOf(true) }
     var listening by remember { mutableStateOf(false) }
