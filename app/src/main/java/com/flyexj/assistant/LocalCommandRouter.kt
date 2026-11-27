@@ -6,6 +6,20 @@ import android.provider.Settings
 class LocalCommandRouter(private val context: Context) {
     data class Result(val handled: Boolean, val message: String)
     fun isCall(raw: String): Boolean = Regex("(?i)\\b(call|dial|phone|fon)\\b|کال|فون|ملاؤ|ملائیں").containsMatchIn(raw)
+    private fun normalized(value: String): String {
+        val latin = try { android.icu.text.Transliterator.getInstance("Any-Latin; Latin-ASCII").transliterate(value) } catch (_: Exception) { value }
+        return latin.lowercase(java.util.Locale.ROOT).replace(Regex("[^a-z0-9]"), "")
+    }
+    private fun sound(value: String): String = normalized(value).replace("ph","f").replace("sh","s").replace("kh","k").replace("ch","c").replace(Regex("[aeiou]"), "").replace(Regex("(.)\\1+"), "$1")
+    private fun distance(a: String, b: String): Int {
+        var row = IntArray(b.length + 1) { it }
+        for (i in a.indices) {
+            val next = IntArray(b.length + 1); next[0] = i + 1
+            for (j in b.indices) next[j+1] = minOf(next[j]+1,row[j+1]+1,row[j]+if(a[i]==b[j]) 0 else 1)
+            row = next
+        }
+        return row[b.length]
+    }
     private fun dial(raw: String): Result {
         val name = raw.replace(Regex("(?i)\\b(call|dial|phone|fon|karo|kar|ko|mila|do|please|sim\\s*[12]|se)\\b|کال|فون|کرو|کریں|کو|ملا دو|ملائیں|سے|سم\\s*[۱۲12]"), " ").trim().replace(Regex("\\s+"), " ")
         if (name.isBlank()) return Result(true, "Please say a contact name or number.")
@@ -17,12 +31,26 @@ class LocalCommandRouter(private val context: Context) {
                 while (cursor.moveToNext()) {
                     val n = cursor.getString(0) ?: continue
                     val v = cursor.getString(1) ?: continue
-                    if (n.equals(name,true) || n.contains(name,true)) matches.add(n to v)
+                    matches.add(n to v)
                 }
             }
-            val exact = matches.filter { it.first.equals(name,true) }.ifEmpty { matches }.distinctBy { it.second }
+            val target = normalized(name)
+            val phonetic = sound(name)
+            val ranked = matches.map { entry ->
+                val candidate = normalized(entry.first)
+                val score = when {
+                    candidate == target && target.isNotEmpty() -> 100
+                    target.length >= 4 && candidate.contains(target) -> 90
+                    phonetic.length >= 3 && sound(entry.first) == phonetic -> 80
+                    target.length >= 5 && distance(candidate,target) <= 1 -> 70
+                    else -> 0
+                }
+                entry to score
+            }.filter { it.second > 0 }
+            val best = ranked.maxOfOrNull { it.second } ?: 0
+            val exact = ranked.filter { it.second == best }.map { it.first }.distinctBy { it.second }
             if (exact.isEmpty()) return Result(true, "Contact not found: $name")
-            if (exact.size > 1) return Result(true, "Multiple numbers found. Please say the full contact name or number.")
+            if (exact.size > 1) return Result(true, "Multiple matches: ${exact.take(4).joinToString { it.first }}. Please say the full contact name or number.")
             exact.first().second
         }
         // Use the system dialer so the user can confirm the number and select SIM.
