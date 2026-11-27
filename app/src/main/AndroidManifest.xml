@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.FLASHLIGHT" />
     <uses-permission android:name="android.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <queries>
         <intent><action android:name="android.speech.RecognitionService" /></intent>
         <package android:name="com.whatsapp" />
@@ -16,6 +19,7 @@
         <intent><action android:name="android.intent.action.VIEW" /><data android:mimeType="image/*" /></intent>
     </queries>
     <application android:allowBackup="false" android:label="FlyexJ" android:theme="@android:style/Theme.Material.NoActionBar" android:supportsRtl="true">
+        <service android:name=".WakeService" android:exported="false" android:foregroundServiceType="microphone" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
