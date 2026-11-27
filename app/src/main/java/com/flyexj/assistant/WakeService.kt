@@ -17,7 +17,7 @@ class WakeService : Service() {
     private var busy = false
     private var generation = 0
     private var language = "ur-PK"
-    private val wake = Regex("(?i)(hey\\s*)?(fly\\s*ex\\s*j|flyxj|fly\\s*ex\\s*jay|فلائی\\s*ایکس\\s*جے|فلائی\\s*ایکس\\s*جی)")
+    private val wake = Regex("(?i)(?:hey\\s*)?(?:fly\\s*(?:ex|x|eks)\\s*(?:jay|jee|gee|j|g)|فلائی\\s*ایکس\\s*(?:جے|جی)|فلائیکس\\s*(?:جے|جی))(?![a-z])")
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onCreate() {
         super.onCreate()
@@ -30,7 +30,7 @@ class WakeService : Service() {
                     awaiting = command.isBlank()
                     if (awaiting) {
                         voice.speak(if(language == "ur-PK") "جی، بتائیں" else "Yes, I'm listening")
-                        schedule(1800)
+                        schedule(2200)
                     } else {
                         respond(command)
                     }
@@ -39,7 +39,7 @@ class WakeService : Service() {
         }, { state ->
             if (running && !busy && !state.startsWith("Listening") && !state.startsWith("Hearing") && !state.startsWith("Processing")) {
                 awaiting = false
-                schedule(1500)
+                schedule(800)
             }
         })
     }
