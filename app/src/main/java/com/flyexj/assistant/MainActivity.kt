@@ -33,6 +33,21 @@ class MainActivity : ComponentActivity() {
     private val prefs by lazy { getSharedPreferences("flyexj_ai", MODE_PRIVATE) }
     private var language = "ur-PK"
     private var requestId = 0
+    private var wakeMode = false
+    private var foreground = false
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private fun rearm() {
+        handler.postDelayed({
+            if (wakeMode && foreground && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                voiceInput.start(language)
+            }
+        }, 500)
+    }
+    override fun onResume() { super.onResume(); foreground = true; if (wakeMode) rearm() }
+    override fun onPause() { foreground = false; if (::voiceInput.isInitialized) voiceInput.stop(); super.onPause() }
+    private fun speakReply(text: String) {
+        voiceReply.speak(text)
+    }
     private val history = ArrayDeque<String>()
     private fun cloud(text: String, test: Boolean = false) {
         val token = prefs.getString("token", "") ?: ""
@@ -50,7 +65,7 @@ class MainActivity : ComponentActivity() {
                     if (!answer.startsWith("AI error") && !answer.startsWith("Cloud connection failed")) {
                         history.addLast("User: $text\nAssistant: $answer")
                         while (history.size > 4) history.removeFirst()
-                        voiceReply.speak(answer)
+                        speakReply(answer)
                     }
                 }
             }
@@ -63,6 +78,7 @@ class MainActivity : ComponentActivity() {
         voiceReply.speak(result.message)
     }
     private fun execute(text: String) {
+        voiceReply.stop()
         requestId++
         if (text.startsWith("AI:",true)) { cloud(text.substringAfter(':').trim()); return }
         if (commandRouter.isCall(text) && ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
@@ -84,15 +100,40 @@ class MainActivity : ComponentActivity() {
         commandRouter = LocalCommandRouter(this)
         voiceReply = VoiceReply(this)
         voiceInput = VoiceInputManager(this, { text ->
-            execute(text)
-        }, { state -> voiceCallback?.invoke("", state) })
+            if (wakeMode) {
+                val wake = Regex("(?i)(hey\\s*)?(fly\\s*ex\\s*j|flyxj|fly ex jay|فلائی\\s*ایکس\\s*جے|فلائی\\s*ایکس\\s*جی)")
+                val match = wake.find(text)
+                if (match != null) {
+                    voiceReply.stop()
+                    val rest = text.substring(match.range.last + 1).trim()
+                    if (rest.isNotBlank()) execute(rest) else {
+                        voiceCallback?.invoke("", "Ready — tap Start talking or say Hey FlyexJ followed by a command")
+                    }
+                }
+                rearm()
+            } else execute(text)
+        }, { state ->
+            voiceCallback?.invoke("", state)
+            if (wakeMode && !state.startsWith("Listening") && !state.startsWith("Hearing") && !state.startsWith("Processing")) rearm()
+        })
         setContent {
-            FlyexJApp(initialToken = prefs.getString("token","") ?: "", onSaveToken = { prefs.edit().putString("token",it).apply() }, onTest = { callback -> voiceCallback = callback; cloud("Reply with a short greeting in Urdu.",true) }, onLanguage = { language = it; voiceReply.setLanguage(it) }, onTyped = { text, callback -> voiceCallback = callback; execute(text) }, onListen = { callback ->
+            FlyexJApp(initialToken = prefs.getString("token","") ?: "", onSaveToken = { prefs.edit().putString("token",it).apply() }, onTest = { callback -> voiceCallback = callback; cloud("Reply with a short greeting in Urdu.",true) }, onLanguage = { language = it; voiceReply.setLanguage(it) }, onWake = { enabled ->
+                wakeMode = enabled
+                if (enabled) {
+                    voiceReply.stop()
+                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) rearm()
+                    else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                } else voiceInput.stop()
+            }, onTyped = { text, callback -> voiceCallback = callback; execute(text) }, onListen = { callback ->
                 voiceCallback = callback
+                wakeMode = false
+                voiceReply.stop()
+                requestId++
+                voiceInput.stop()
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                     voiceInput.start(language)
                 } else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-            }, onStop = { voiceInput.stop(); voiceReply.stop() })
+            }, onStop = { wakeMode = false; requestId++; voiceInput.stop(); voiceReply.stop() })
         }
     }
     override fun onDestroy() {
@@ -102,12 +143,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 @Composable
-fun FlyexJApp(initialToken: String, onSaveToken: (String) -> Unit, onTest: ((String,String) -> Unit) -> Unit, onLanguage: (String) -> Unit, onTyped: (String, (String, String) -> Unit) -> Unit, onListen: ((String, String) -> Unit) -> Unit, onStop: () -> Unit) {
+fun FlyexJApp(initialToken: String, onSaveToken: (String) -> Unit, onTest: ((String,String) -> Unit) -> Unit, onLanguage: (String) -> Unit, onWake: (Boolean) -> Unit, onTyped: (String, (String, String) -> Unit) -> Unit, onListen: ((String, String) -> Unit) -> Unit, onStop: () -> Unit) {
     var showSettings by remember { mutableStateOf(false) }
     var token by remember { mutableStateOf(initialToken) }
     var typed by remember { mutableStateOf("") }
     var urdu by remember { mutableStateOf(true) }
     var listening by remember { mutableStateOf(false) }
+    var wake by remember { mutableStateOf(false) }
     var transcript by remember { mutableStateOf("Tap Start talking and speak naturally") }
     var status by remember { mutableStateOf("Ready when you are") }
     val bg = Color(0xFF070B13)
@@ -145,6 +187,7 @@ fun FlyexJApp(initialToken: String, onSaveToken: (String) -> Unit, onTest: ((Str
             Spacer(Modifier.height(16.dp))
             Button(onClick = {
                 if (!listening) {
+                    wake = false
                     listening = true
                     status = "Listening…"
                     onListen { text, newStatus ->
@@ -164,6 +207,8 @@ fun FlyexJApp(initialToken: String, onSaveToken: (String) -> Unit, onTest: ((Str
             }
             OutlinedTextField(value = typed, onValueChange = { typed = it }, label = { Text("Type a command / حکم لکھیں") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
             Button(onClick = { if (typed.isNotBlank()) { val command = typed; typed = ""; onTyped(command) { text, reply -> transcript = text; status = reply; listening = false } } }, modifier = Modifier.fillMaxWidth()) { Text("Send command") }
+            Row(verticalAlignment = Alignment.CenterVertically) { Text("Hey FlyexJ (app open)"); Spacer(Modifier.weight(1f)); Switch(checked = wake, onCheckedChange = { wake = it; onWake(it) }) }
+            TextButton(onClick = { wake = false; listening = false; onStop(); status = "Stopped" }) { Text("Stop speaking / listening") }
             Text("Try: Ammi ko call karo • ٹارچ آن کرو", color = cyan, fontSize = 12.sp)
             Text("Calls • Contacts • Phone controls • Search", color = Color(0xFF8296B1), fontSize = 11.sp)
             Spacer(Modifier.height(16.dp))
